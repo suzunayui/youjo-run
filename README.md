@@ -1,4 +1,9 @@
-# Sprite Runner
+# Youjo Run
+
+URL: <https://suzunayui.com/youjo-run/>
+
+遊べるURLはこちら
+https://suzunayui.com/youjo-run/
 
 mp4 からスプライトシートを作って、`index.html` で動かす簡単なデモです。
 
@@ -26,4 +31,3 @@ python make_sprite_sheets.py --columns 8 --output-dir spritesheets
 ## 実行
 
 `index.html` をブラウザで開くと動きます。
-
