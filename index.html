@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Sprite Runner</title>
+  <title>Youjo Run</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -70,6 +70,18 @@
     }
     #manual-btn:hover { background: rgba(147, 197, 253, 0.28); }
     #manual-btn:active { transform: translateY(1px); }
+    #reset-score-btn {
+      border: none;
+      border-radius: 8px;
+      padding: 6px 10px;
+      background: rgba(239, 68, 68, 0.18);
+      color: #e2e8f0;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.45);
+    }
+    #reset-score-btn:hover { background: rgba(239, 68, 68, 0.28); }
+    #reset-score-btn:active { transform: translateY(1px); }
     main {
       flex: 1;
       display: grid;
@@ -231,6 +243,7 @@
   <header>
     <div class="title">Youjo Run</div>
     <div class="actions">
+      <button id="reset-score-btn" type="button">ハイスコアリセット</button>
       <button id="manual-btn" type="button" aria-haspopup="dialog" aria-controls="manual-modal">説明書</button>
     </div>
   </header>
@@ -260,8 +273,9 @@
       <p>D / →: 右に走る</p>
       <p>W / Space / ↑: ジャンプ</p>
       <p>S / ↓: 座り（座る→座り待機）</p>
+      <p>しゃがむとロケットを回避できます</p>
       <p>Z: 回転モーション</p>
-      <p>右向きはスプライトを水平反転して描画しています。</p>
+      <p>回転しながら右に移動するとスコアが増えやすくなるよ</p>
     </div>
   </div>
 
@@ -301,12 +315,22 @@
     };
 
     let lastInputTime = performance.now();
-    const idleSleepMs = 10000;
+    const idleSleepMs = 5000;
 
     let sleepStartTime = 0;
     let lastZzzSpawnTime = 0;
     const zzzSpawnMs = 1200;
     const sleepParticles = [];
+
+    // Day/Night coin drain + exhaustion
+    const dayPhaseMs = 20000;
+    let dayNightOffsetMs = 0;
+    let nightCount = 0;
+    let wasNight = false;
+    let debtAccumSec = 0;
+    let deathReason = null; // "debt" | null
+    let debtDeathActive = false;
+    let debtSleepEndTime = 0;
 
     // Game state
     let maxDistanceX = state.x;
@@ -314,11 +338,18 @@
     let highScore = Number(localStorage.getItem("youjoRunHighScore") || "0");
     let gameOver = false;
     const obstacles = [];
+    const kickedObstacles = [];
+    const pits = [];
     let nextSpawnX = state.x + 600;
+    let nextPitX = state.x + 1000;
+    const killers = [];
+    let nextKillerTime = performance.now() + 2500;
+    const explosions = [];
     let gameOverTime = 0;
     let gameOverAwaitRelease = false;
     const maxHp = 3;
-    let hp = maxHp;
+    const maxHpUnits = maxHp * 2;
+    let hpUnits = maxHpUnits;
     let lastHitTime = 0;
     const invincibleMs = 900;
 
@@ -326,33 +357,56 @@
     let coinCount = 0;
     let nextCoinX = state.x + 400;
 
-    const stars = [];
-    let nextStarX = state.x + 1200;
-
     // Jump handling (allow double jump)
     let jumpsUsed = 0; // 0 on ground, max 2 in air
     let prevJumpHeld = false;
 
-    // Coin power-up: spend 10 coins for 5s invincibility
-    let powerInvincibleUntil = 0;
+    // Lollipop power-up: become giant and kick obstacles
+    const lollipops = [];
+    let nextLollipopX = state.x + 1800;
+    let giantUntil = 0;
+    const giantDurationMs = 5000;
 
     function restartGame() {
       gameOver = false;
       gameOverAwaitRelease = false;
+      deathReason = null;
+      debtAccumSec = 0;
+      debtDeathActive = false;
+      debtSleepEndTime = 0;
+
+      // Reset player to a clean starting state.
+      state.x = canvas.width * 0.5;
+      state.y = groundY;
+      state.vy = 0;
+      state.onGround = true;
+      state.facing = "left";
+      jumpsUsed = 0;
+      prevJumpHeld = false;
+      cameraX = state.x - screenCenterX;
+
       obstacles.length = 0;
-      nextSpawnX = state.x + 600;
+      kickedObstacles.length = 0;
+      pits.length = 0;
+      killers.length = 0;
+      nextKillerTime = performance.now() + 2500;
+      explosions.length = 0;
+      nightCount = 0;
+      // Restart always begins at daytime, and avoid immediate coin drain.
+      dayNightOffsetMs = -(performance.now() % (dayPhaseMs * 2));
+      wasNight = false;
       score = 0;
       maxDistanceX = state.x;
-      hp = maxHp;
+      hpUnits = maxHpUnits;
       lastHitTime = 0;
       coins.length = 0;
       coinCount = 0;
+      lollipops.length = 0;
+      giantUntil = 0;
+      nextSpawnX = state.x + 600;
+      nextPitX = state.x + 1000;
       nextCoinX = state.x + 400;
-      stars.length = 0;
-      nextStarX = state.x + 1200;
-      jumpsUsed = 0;
-      prevJumpHeld = false;
-      powerInvincibleUntil = 0;
+      nextLollipopX = state.x + 1800;
       lastInputTime = performance.now();
       setAction("idle");
     }
@@ -478,6 +532,16 @@
       const hasInput = anyInputActive();
       if (hasInput) lastInputTime = now;
 
+      // Day/Night transition handling (every 20s).
+      const dayNightNow = now + dayNightOffsetMs;
+      const isNightNow = (dayNightNow % (dayPhaseMs * 2)) >= dayPhaseMs;
+      if (!wasNight && isNightNow) {
+        nightCount += 1;
+        const drain = Math.pow(2, nightCount); // 2,4,8,...
+        coinCount -= drain;
+      }
+      wasNight = isNightNow;
+
       if (gameOver) {
         // Prevent instant restart if the player is holding a key.
         if (gameOverAwaitRelease) {
@@ -486,6 +550,92 @@
           restartGame();
         }
         return;
+      }
+
+      // Debt death sequence: play sleep animation, no input, then game over.
+      if (debtDeathActive) {
+        if (state.action !== "sleep") setAction("sleep");
+
+        const anim = animations.sleep;
+        const frameDuration = 1 / anim.fps;
+        let reachedEnd = false;
+        state.frameTime += delta;
+        while (state.frameTime >= frameDuration) {
+          state.frameTime -= frameDuration;
+          if (state.frameIdx < anim.frames - 1) {
+            state.frameIdx += 1;
+          } else if (anim.loop) {
+            state.frameIdx = 0;
+          } else {
+            reachedEnd = true;
+          }
+        }
+        if (reachedEnd) {
+          state.frameIdx = anim.frames - 1;
+        }
+
+        if (state.frameIdx >= anim.frames - 1) {
+          if (debtSleepEndTime === 0) debtSleepEndTime = now;
+
+          if (now - lastZzzSpawnTime >= zzzSpawnMs) {
+            lastZzzSpawnTime = now;
+            sleepParticles.push({
+              text: "💤",
+              x: screenCenterX + (Math.random() - 0.5) * drawSize * 0.3,
+              y: state.y - drawSize * 0.75,
+              vx: (Math.random() - 0.5) * 10,
+              vy: -20 - Math.random() * 20,
+              born: now,
+              life: 2200 + Math.random() * 600,
+            });
+            if (sleepParticles.length > 12) sleepParticles.shift();
+          }
+        }
+
+        for (let i = sleepParticles.length - 1; i >= 0; i--) {
+          const p = sleepParticles[i];
+          const age = now - p.born;
+          if (age >= p.life) {
+            sleepParticles.splice(i, 1);
+            continue;
+          }
+          p.x += p.vx * delta;
+          p.y += p.vy * delta;
+          p.vx *= 0.98;
+        }
+
+        if (debtSleepEndTime !== 0 && now - debtSleepEndTime >= 2000) {
+          deathReason = "debt";
+          gameOver = true;
+          gameOverTime = now;
+          gameOverAwaitRelease = true;
+          if (score > highScore) {
+            highScore = score;
+            localStorage.setItem("youjoRunHighScore", String(highScore));
+          }
+        }
+        return;
+      }
+
+      // Debt drain: while coinCount is negative, lose half a heart every 5 seconds.
+      if (coinCount < 0) {
+        debtAccumSec += delta;
+        while (debtAccumSec >= 5) {
+          debtAccumSec -= 5;
+          hpUnits -= 1;
+          if (hpUnits <= 0) {
+            debtDeathActive = true;
+            debtSleepEndTime = 0;
+            sleepParticles.length = 0;
+            lastZzzSpawnTime = now;
+            setAction("sleep");
+            state.frameIdx = 0;
+            state.frameTime = 0;
+            return;
+          }
+        }
+      } else {
+        debtAccumSec = 0;
       }
 
       // Sleep after 10s idle, only when grounded.
@@ -571,32 +721,72 @@
         setAction("jump");
       }
 
+      const isOverPit = pits.some((p) => state.x >= p.x && state.x <= p.x + p.w);
+
+      if (isOverPit && state.onGround) {
+        state.onGround = false;
+        state.vy = Math.max(0, state.vy);
+      }
+
       if (!state.onGround) {
         state.vy += gravity * delta;
         state.y += state.vy * delta;
-        if (state.y >= groundY) {
+        if (!isOverPit && state.y >= groundY) {
           state.y = groundY;
           state.vy = 0;
           state.onGround = true;
           jumpsUsed = 0;
         }
       } else {
-        state.y = groundY;
+        if (!isOverPit) state.y = groundY;
         jumpsUsed = 0;
       }
 
       // Update score (distance to the right) and difficulty.
       if (state.x > maxDistanceX) {
+        const dx = state.x - maxDistanceX;
         maxDistanceX = state.x;
-        score = Math.floor(maxDistanceX - canvas.width * 0.5);
+        const spinBonus = state.action === "rotate" ? 4 : 1;
+        score += Math.floor(dx * spinBonus);
       }
 
       const difficulty = Math.min(1, Math.max(0, (maxDistanceX - canvas.width * 0.5) / 6000));
 
+      function adjustXForPits(x, w, buffer = 140) {
+        let adjusted = x;
+        for (const p of pits) {
+          const pitStart = p.x - buffer;
+          const pitEnd = p.x + p.w + buffer;
+          const obStart = adjusted - w * 0.5;
+          const obEnd = adjusted + w * 0.5;
+          if (obEnd >= pitStart && obStart <= pitEnd) {
+            adjusted = pitEnd + w * 0.5;
+          }
+        }
+        return adjusted;
+      }
+
+      // Spawn pits ahead of the player while not sleeping.
+      if (state.action !== "sleep") {
+        while (maxDistanceX + canvas.width * 1.5 >= nextPitX) {
+          const pitWidth = 140 + Math.random() * 220;
+          pits.push({ x: nextPitX, w: pitWidth });
+          const baseGap = 1200;
+          const gap = baseGap + Math.random() * 1800 - difficulty * 500;
+          nextPitX += Math.max(900, gap);
+        }
+      }
+
       // Spawn obstacles ahead of the player while not sleeping.
+      // Avoid spawning close to pits.
       if (state.action !== "sleep") {
         while (maxDistanceX + canvas.width * 1.2 >= nextSpawnX) {
           const size = 48 + Math.random() * 18;
+          const safeX = adjustXForPits(nextSpawnX, size);
+          if (safeX !== nextSpawnX) {
+            nextSpawnX = safeX;
+            continue;
+          }
           obstacles.push({
             x: nextSpawnX,
             w: size,
@@ -607,6 +797,24 @@
           const gap = baseGap + Math.random() * 380 - difficulty * 180;
           nextSpawnX += Math.max(220, gap);
         }
+      }
+
+      // Spawn flying "killer" bullets from the right.
+      if (state.action !== "sleep" && now >= nextKillerTime) {
+        const y = groundY - drawSize * (0.6 + Math.random() * 0.9);
+        killers.push({
+          // Spawn from the right edge of the screen (world coordinate).
+          x: cameraX + canvas.width + 40 + Math.random() * 60,
+          y,
+          r: 30,
+          vx: -(10 + difficulty * 5),   // start slow
+          ax: -(260 + difficulty * 160), // accelerate
+          maxVx: -(520 + difficulty * 260),
+          emoji: "🚀",
+        });
+        const baseInterval = 4200;
+        const interval = baseInterval + Math.random() * 3200 - difficulty * 1200;
+        nextKillerTime = now + Math.max(2200, interval);
       }
 
       // Spawn coins ahead of the player while not sleeping.
@@ -628,19 +836,19 @@
         }
       }
 
-      // Spawn stars (rarer power-up) ahead of the player while not sleeping.
+      // Spawn lollipops (giant power-up) ahead of the player.
       if (state.action !== "sleep") {
-        while (maxDistanceX + canvas.width * 1.2 >= nextStarX) {
-          const starY = groundY - drawSize * (1.0 + Math.random() * 1.0);
-          stars.push({
-            x: nextStarX,
-            y: starY,
-            r: 26,
-            emoji: "⭐",
+        while (maxDistanceX + canvas.width * 1.2 >= nextLollipopX) {
+          const lollyY = groundY - drawSize * (0.6 + Math.random() * 0.9);
+          lollipops.push({
+            x: nextLollipopX,
+            y: lollyY,
+            r: 28,
+            emoji: "🍭",
           });
-          const baseGap = 1100;
-          const gap = baseGap + Math.random() * 1200 - difficulty * 400;
-          nextStarX += Math.max(800, gap);
+          const baseGap = 1800;
+          const gap = baseGap + Math.random() * 1800 - difficulty * 500;
+          nextLollipopX += Math.max(1200, gap);
         }
       }
 
@@ -648,20 +856,66 @@
       for (let i = obstacles.length - 1; i >= 0; i--) {
         if (obstacles[i].x < state.x - canvas.width * 2) obstacles.splice(i, 1);
       }
+      for (let i = pits.length - 1; i >= 0; i--) {
+        if (pits[i].x + pits[i].w < state.x - canvas.width * 2) pits.splice(i, 1);
+      }
+      for (let i = killers.length - 1; i >= 0; i--) {
+        if (killers[i].x < state.x - canvas.width * 2) killers.splice(i, 1);
+      }
       for (let i = coins.length - 1; i >= 0; i--) {
         if (coins[i].x < state.x - canvas.width * 2) coins.splice(i, 1);
       }
-      for (let i = stars.length - 1; i >= 0; i--) {
-        if (stars[i].x < state.x - canvas.width * 2) stars.splice(i, 1);
+      for (let i = lollipops.length - 1; i >= 0; i--) {
+        if (lollipops[i].x < state.x - canvas.width * 2) lollipops.splice(i, 1);
+      }
+
+      // Update kicked obstacles (screen-space parabolic flight).
+      for (let i = kickedObstacles.length - 1; i >= 0; i--) {
+        const ko = kickedObstacles[i];
+        ko.vy += 2200 * delta;
+        ko.x += ko.vx * delta;
+        ko.y += ko.vy * delta;
+        ko.spin += ko.spinV * delta;
+        if (ko.y > canvas.height + ko.size || ko.x < -ko.size * 2 || ko.x > canvas.width + ko.size * 2) {
+          kickedObstacles.splice(i, 1);
+        }
+      }
+
+      // Update killers movement.
+      for (let i = killers.length - 1; i >= 0; i--) {
+        const k = killers[i];
+        if (typeof k.ax === "number") {
+          k.vx = Math.max(k.maxVx, k.vx + k.ax * delta);
+        }
+        k.x += k.vx * delta;
+      }
+
+      // Update explosions
+      for (let i = explosions.length - 1; i >= 0; i--) {
+        if (now - explosions[i].born >= explosions[i].dur) explosions.splice(i, 1);
+      }
+
+      // Falling into pit -> game over.
+      if (state.y > canvas.height + drawSize * 0.5) {
+        gameOver = true;
+        gameOverTime = now;
+        gameOverAwaitRelease = true;
+        if (score > highScore) {
+          highScore = score;
+          localStorage.setItem("youjoRunHighScore", String(highScore));
+        }
+        return;
       }
 
       // Coin pickup
-      const charTop = state.y - drawSize;
+      const isGiantNow = now < giantUntil;
+      const charSizeNow = drawSize * (isGiantNow ? 2 : 1);
+      const charTop = state.y - charSizeNow;
       const charBottom = state.y;
       for (let i = coins.length - 1; i >= 0; i--) {
         const c = coins[i];
         const cScreenX = c.x - cameraX;
-        const nearX = Math.abs(cScreenX - screenCenterX) < (c.r + drawSize * 0.25);
+        const nearX = Math.abs(cScreenX - screenCenterX) < (c.r + charSizeNow * 0.25);
         const nearY = c.y > charTop - c.r && c.y < charBottom + c.r;
         if (nearX && nearY) {
           coins.splice(i, 1);
@@ -670,32 +924,109 @@
         }
       }
 
-      // Star pickup: 5s invincibility + rainbow glow.
-      for (let i = stars.length - 1; i >= 0; i--) {
-        const s = stars[i];
-        const sScreenX = s.x - cameraX;
-        const nearX = Math.abs(sScreenX - screenCenterX) < (s.r + drawSize * 0.25);
-        const nearY = s.y > charTop - s.r && s.y < charBottom + s.r;
+      // Lollipop pickup: giant for 5 seconds.
+      for (let i = lollipops.length - 1; i >= 0; i--) {
+        const l = lollipops[i];
+        const lScreenX = l.x - cameraX;
+        const nearX = Math.abs(lScreenX - screenCenterX) < (l.r + charSizeNow * 0.35);
+        const nearY = l.y > charTop - l.r && l.y < charBottom + l.r;
         if (nearX && nearY) {
-          stars.splice(i, 1);
-          powerInvincibleUntil = Math.max(powerInvincibleUntil, now) + 5000;
+          lollipops.splice(i, 1);
+          giantUntil = Math.max(giantUntil, now) + giantDurationMs;
         }
       }
 
-      // Collision: simple ground hitbox with HP + i-frames.
+      const isGiant = now < giantUntil;
+      const isCrouching = state.onGround && (state.action === "sit" || state.action === "sitting");
+
+      // Collision: simple ground hitbox with HP + i-frames, or kick obstacles while giant.
       if (state.action !== "sleep" && state.onGround && state.action !== "jump") {
-        if (now < powerInvincibleUntil) {
-          // Fully invincible during power-up.
+        if (isGiant) {
+          for (let i = obstacles.length - 1; i >= 0; i--) {
+            const ob = obstacles[i];
+            const obScreenX = ob.x - cameraX;
+            const nearX = Math.abs(obScreenX - screenCenterX) < (ob.w * 0.85);
+            if (nearX) {
+              obstacles.splice(i, 1);
+              score += 20;
+              const dir = state.facing === "right" ? 1 : -1;
+              kickedObstacles.push({
+                emoji: ob.emoji,
+                size: ob.w,
+                x: screenCenterX,
+                y: groundY - ob.w * 0.3,
+                vx: dir * (520 + Math.random() * 180),
+                vy: -(780 + Math.random() * 220),
+                spin: 0,
+                spinV: dir * (5 + Math.random() * 4),
+              });
+            }
+          }
         } else if (now - lastHitTime >= invincibleMs) {
           for (let i = 0; i < obstacles.length; i++) {
             const ob = obstacles[i];
             const obScreenX = ob.x - cameraX;
             const nearX = Math.abs(obScreenX - screenCenterX) < (ob.w * 0.55);
             if (nearX) {
-              hp -= 1;
+              hpUnits -= 2;
               lastHitTime = now;
               obstacles.splice(i, 1); // remove hit obstacle
-              if (hp <= 0) {
+              if (hpUnits <= 0) {
+                gameOver = true;
+                gameOverTime = now;
+                gameOverAwaitRelease = true;
+                if (score > highScore) {
+                  highScore = score;
+                  localStorage.setItem("youjoRunHighScore", String(highScore));
+                }
+              }
+              break;
+            }
+          }
+        }
+      }
+
+      // Killer collision: avoidable by crouching. While giant, kick them away.
+      if (state.action !== "sleep" && !isCrouching) {
+        if (isGiant) {
+          for (let i = killers.length - 1; i >= 0; i--) {
+            const k = killers[i];
+            const kScreenX = k.x - cameraX;
+            const nearX = Math.abs(kScreenX - screenCenterX) < (k.r + charSizeNow * 0.35);
+            const nearY = k.y > charTop - k.r && k.y < charBottom + k.r;
+            if (nearX && nearY) {
+              killers.splice(i, 1);
+              const dir = state.facing === "right" ? 1 : -1;
+              kickedObstacles.push({
+                emoji: k.emoji,
+                size: k.r * 2,
+                x: screenCenterX,
+                y: k.y,
+                vx: dir * (640 + Math.random() * 220),
+                vy: -(820 + Math.random() * 260),
+                spin: 0,
+                spinV: dir * (6 + Math.random() * 5),
+              });
+              score += 15;
+            }
+          }
+        } else if (now - lastHitTime >= invincibleMs) {
+          for (let i = 0; i < killers.length; i++) {
+            const k = killers[i];
+            const kScreenX = k.x - cameraX;
+            const nearX = Math.abs(kScreenX - screenCenterX) < (k.r + charSizeNow * 0.25);
+            const nearY = k.y > charTop - k.r && k.y < charBottom + k.r;
+            if (nearX && nearY) {
+              killers.splice(i, 1);
+              explosions.push({
+                x: screenCenterX,
+                y: k.y,
+                born: now,
+                dur: 2000,
+              });
+              hpUnits -= 2;
+              lastHitTime = now;
+              if (hpUnits <= 0) {
                 gameOver = true;
                 gameOverTime = now;
                 gameOverAwaitRelease = true;
@@ -734,21 +1065,39 @@
     }
 
     function drawBackground(camX) {
-      // Cozy pastel sky
+      const nowMs = performance.now();
+      const dayNightNow = nowMs + dayNightOffsetMs;
+      const isNight = (dayNightNow % (dayPhaseMs * 2)) >= dayPhaseMs;
+
+      // Cozy pastel sky (day/night)
       const sky = ctx.createLinearGradient(0, 0, 0, groundY);
-      sky.addColorStop(0, "#f7fbff");
-      sky.addColorStop(0.6, "#e8f2ff");
-      sky.addColorStop(1, "#d7e8ff");
+      if (isNight) {
+        sky.addColorStop(0, "#0b1020");
+        sky.addColorStop(0.6, "#141a33");
+        sky.addColorStop(1, "#1a2140");
+      } else {
+        sky.addColorStop(0, "#f7fbff");
+        sky.addColorStop(0.6, "#e8f2ff");
+        sky.addColorStop(1, "#d7e8ff");
+      }
       ctx.fillStyle = sky;
       ctx.fillRect(0, 0, canvas.width, groundY);
 
-      // Sun (emoji) with soft glow
-      const sunX = canvas.width * 0.12;
-      const sunY = canvas.height * 0.26;
-      const sunR = canvas.width * 0.09;
+      // Sun / Moon (emoji) with soft glow
+      // Place sun/moon near the HP hearts (top-right).
+      const heartSize = Math.round(canvas.width * 0.035 + 10);
+      const heartsWidth = heartSize * maxHp;
+      const sunR = canvas.width * 0.055;
+      const sunX = canvas.width - 12 - heartsWidth - heartSize - sunR * 1.15;
+      const sunY = 8 + heartSize * 1.05;
       const sunGlow = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, sunR);
-      sunGlow.addColorStop(0, "rgba(255, 245, 200, 0.9)");
-      sunGlow.addColorStop(1, "rgba(255, 245, 200, 0)");
+      if (isNight) {
+        sunGlow.addColorStop(0, "rgba(210, 225, 255, 0.7)");
+        sunGlow.addColorStop(1, "rgba(210, 225, 255, 0)");
+      } else {
+        sunGlow.addColorStop(0, "rgba(255, 245, 200, 0.9)");
+        sunGlow.addColorStop(1, "rgba(255, 245, 200, 0)");
+      }
       ctx.fillStyle = sunGlow;
       ctx.beginPath();
       ctx.arc(sunX, sunY, sunR, 0, Math.PI * 2);
@@ -756,7 +1105,7 @@
       ctx.font = `${Math.round(sunR * 1.6)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("🌞", sunX, sunY);
+      ctx.fillText(isNight ? "🌙" : "🌞", sunX, sunY);
 
       const wrapX = (x, span) => ((x % span) + span) % span;
 
@@ -860,6 +1209,26 @@
       ctx.fillRect(0, groundY, canvas.width, 10);
       ctx.fillStyle = "rgba(255, 255, 255, 0.25)";
       ctx.fillRect(0, groundY + 10, canvas.width, 3);
+
+      if (isNight) {
+        ctx.save();
+        ctx.fillStyle = "rgba(5, 10, 20, 0.35)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // Small twinkling stars
+        const starCount = 18;
+        ctx.font = `${Math.round(canvas.width * 0.03)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.globalAlpha = 0.9;
+        for (let i = 0; i < starCount; i++) {
+          const sx = (i * 173 + nowMs * 0.02) % canvas.width;
+          const sy = (i * 97) % (groundY * 0.9);
+          const twinkle = 0.5 + 0.5 * Math.sin(nowMs / 700 + i);
+          ctx.globalAlpha = 0.25 + twinkle * 0.6;
+          ctx.fillText("✨", sx, sy);
+        }
+        ctx.restore();
+      }
     }
 
     function draw() {
@@ -889,21 +1258,102 @@
       }
       ctx.restore();
 
-      // Stars
+      // Kicked obstacles (flying arcs)
       ctx.save();
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      for (const s of stars) {
-        const x = s.x - cameraX;
-        if (x < -s.r || x > canvas.width + s.r) continue;
-        ctx.font = `${Math.round(s.r * 2.2)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+      for (const ko of kickedObstacles) {
+        ctx.save();
+        ctx.translate(ko.x, ko.y);
+        ctx.rotate(ko.spin);
+        ctx.font = `${Math.round(ko.size)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
         ctx.shadowColor = "rgba(0,0,0,1)";
         ctx.shadowBlur = 5;
         ctx.shadowOffsetY = 2;
         ctx.lineWidth = 4;
         ctx.strokeStyle = "rgba(0,0,0,1)";
-        ctx.strokeText(s.emoji, x, s.y);
-        ctx.fillText(s.emoji, x, s.y);
+        ctx.strokeText(ko.emoji, 0, 0);
+        ctx.fillText(ko.emoji, 0, 0);
+        ctx.restore();
+      }
+      ctx.restore();
+
+      // Killers (flying from right)
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      for (const k of killers) {
+        const x = k.x - cameraX;
+        if (x < -k.r || x > canvas.width + k.r) continue;
+        ctx.save();
+        ctx.translate(x, k.y);
+        // Rotate clockwise 225deg (no mirroring).
+        ctx.rotate(5 * Math.PI / 4);
+        ctx.font = `${Math.round(k.r * 2.2)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+        ctx.shadowColor = "rgba(0,0,0,1)";
+        ctx.shadowBlur = 5;
+        ctx.shadowOffsetY = 2;
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = "rgba(0,0,0,1)";
+        ctx.strokeText(k.emoji, 0, 0);
+        ctx.fillText(k.emoji, 0, 0);
+        ctx.restore();
+      }
+      ctx.restore();
+
+      // Explosions
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      for (const ex of explosions) {
+        const age = performance.now() - ex.born;
+        const t = Math.min(1, Math.max(0, age / ex.dur));
+        // Pulse for ~2s: big<->small a few times, then fade out.
+        const pulses = 4;
+        const pulse = 0.5 + 0.5 * Math.sin(t * Math.PI * 2 * pulses);
+        const scale = 0.8 + pulse * 0.9;
+        const size = Math.round(canvas.width * 0.18 * scale);
+        const alpha = Math.max(0, 1 - t * 0.9);
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.font = `${size}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+        ctx.shadowColor = "rgba(0,0,0,0.8)";
+        ctx.shadowBlur = 16;
+        ctx.shadowOffsetY = 6;
+        ctx.fillText("💥", ex.x, ex.y);
+        ctx.restore();
+      }
+      ctx.restore();
+
+      // Pits (draw gaps in ground)
+      ctx.save();
+      for (const p of pits) {
+        const x0 = p.x - cameraX;
+        const x1 = x0 + p.w;
+        if (x1 < -20 || x0 > canvas.width + 20) continue;
+        ctx.fillStyle = "rgba(78, 52, 33, 0.9)";
+        ctx.fillRect(x0, groundY + 2, p.w, canvas.height - groundY);
+        ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
+        ctx.fillRect(x0, groundY + 2, p.w, 6);
+      }
+      ctx.restore();
+
+      // Lollipops
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      for (const l of lollipops) {
+        const x = l.x - cameraX;
+        if (x < -l.r || x > canvas.width + l.r) continue;
+        ctx.font = `${Math.round(l.r * 2.2)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+        ctx.shadowColor = "rgba(0,0,0,1)";
+        ctx.shadowBlur = 5;
+        ctx.shadowOffsetY = 2;
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = "rgba(0,0,0,1)";
+        ctx.strokeText(l.emoji, x, l.y);
+        ctx.fillText(l.emoji, x, l.y);
       }
       ctx.restore();
 
@@ -927,18 +1377,30 @@
 
       // HUD
       ctx.save();
-      ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+      const hudNow = performance.now() + dayNightOffsetMs;
+      const isNightHud = (hudNow % (dayPhaseMs * 2)) >= dayPhaseMs;
+      ctx.fillStyle = isNightHud ? "rgba(255, 255, 255, 0.95)" : "rgba(15, 23, 42, 0.9)";
       ctx.font = `${Math.round(canvas.width * 0.02 + 12)}px sans-serif`;
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
-      const hudText = `距離: ${Math.max(0, score)}  /  ハイスコア: ${highScore}  /  おかね: ${coinCount}`;
-      ctx.fillText(hudText, 12, 10);
+      const daysSurvived = nightCount;
+      const nextPayment = Math.pow(2, nightCount + 1); // 2,4,8,...
+      const x = 12;
+      const y = 10;
+      const lineH = Math.round(canvas.width * 0.02 + 18);
+      ctx.fillText(`距離: ${Math.max(0, score)}  /  ハイスコア: ${highScore}`, x, y);
+      ctx.fillText(`おかね: ${coinCount}  /  次回の支払額: ${nextPayment}`, x, y + lineH);
+      ctx.fillText(`生存日数: ${daysSurvived}`, x, y + lineH * 2);
 
       // HP hearts (top-right)
       const heartSize = Math.round(canvas.width * 0.035 + 10);
       ctx.font = `${heartSize}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
       ctx.textAlign = "right";
-      const hearts = "❤️".repeat(Math.max(0, hp)) + "🤍".repeat(Math.max(0, maxHp - hp));
+      const hpUnitsClamped = Math.max(0, Math.min(maxHpUnits, hpUnits));
+      const fullHearts = Math.floor(hpUnitsClamped / 2);
+      const halfHeart = hpUnitsClamped % 2;
+      const emptyHearts = Math.max(0, maxHp - fullHearts - halfHeart);
+      const hearts = "❤️".repeat(fullHearts) + (halfHeart ? "💔" : "") + "🤍".repeat(emptyHearts);
       ctx.fillText(hearts, canvas.width - 12, 8);
 
       ctx.restore();
@@ -951,28 +1413,26 @@
       const row = Math.floor(state.frameIdx / anim.cols);
       const sx = col * frameSize;
       const sy = row * frameSize;
-      const dx = screenCenterX - drawSize * 0.5;
-      const dy = state.y - drawSize;
+      const nowMs = performance.now();
+      const isGiant = nowMs < giantUntil;
+      const giantScale = isGiant ? 2 : 1;
+      const drawSizeNow = drawSize * giantScale;
+      const dx = screenCenterX - drawSizeNow * 0.5;
+      const dy = state.y - drawSizeNow;
 
       ctx.save();
-      const nowMs = performance.now();
-      const isPowerInvincible = nowMs < powerInvincibleUntil;
-      if (isPowerInvincible) {
-        // Warm-only glow (reds/oranges/yellows), no cool hues.
-        const warmMax = 70; // up to yellow, avoids green/blue
-        const cycle = (nowMs / 2.5) % (warmMax * 2);
-        const hue = cycle <= warmMax ? cycle : warmMax * 2 - cycle; // 0 -> warmMax -> 0
-        ctx.filter = `hue-rotate(${hue}deg) saturate(150%) brightness(1.12)`;
-        ctx.shadowColor = "rgba(255,255,255,0.9)";
-        ctx.shadowBlur = 18;
+      if (isGiant) {
+        ctx.globalAlpha = 0.98;
+        ctx.shadowColor = "rgba(255, 180, 220, 0.9)";
+        ctx.shadowBlur = 20;
       }
       if (state.facing === "right") {
-        ctx.translate(dx + drawSize, dy);
+        ctx.translate(dx + drawSizeNow, dy);
         ctx.scale(-1, 1);
-        ctx.drawImage(img, sx, sy, frameSize, frameSize, 0, 0, drawSize, drawSize);
+        ctx.drawImage(img, sx, sy, frameSize, frameSize, 0, 0, drawSizeNow, drawSizeNow);
       } else {
         ctx.translate(dx, dy);
-        ctx.drawImage(img, sx, sy, frameSize, frameSize, 0, 0, drawSize, drawSize);
+        ctx.drawImage(img, sx, sy, frameSize, frameSize, 0, 0, drawSizeNow, drawSizeNow);
       }
       ctx.restore();
 
@@ -1020,8 +1480,9 @@
         ctx.fillStyle = "#ffffff";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.font = `bold ${Math.round(canvas.width * 0.06)}px sans-serif`;
-        ctx.fillText("GAME OVER", screenCenterX, canvas.height * 0.45);
+        ctx.font = `bold ${Math.round(canvas.width * 0.05)}px sans-serif`;
+        const gameOverTitle = deathReason === "debt" ? "おかねがない、もはやこれまで・・・" : "GAME OVER";
+        ctx.fillText(gameOverTitle, screenCenterX, canvas.height * 0.45);
         ctx.font = `${Math.round(canvas.width * 0.03)}px sans-serif`;
         ctx.fillText("タップ / Space で再開", screenCenterX, canvas.height * 0.55);
         ctx.restore();
@@ -1093,6 +1554,7 @@
 
     const manualBtn = document.getElementById("manual-btn");
     const manualModal = document.getElementById("manual-modal");
+    const resetScoreBtn = document.getElementById("reset-score-btn");
     const closeManual = () => {
       if (!manualModal) return;
       manualModal.classList.remove("open");
@@ -1105,6 +1567,10 @@
       manualModal.querySelector(".close")?.focus();
     };
     manualBtn?.addEventListener("click", openManual);
+    resetScoreBtn?.addEventListener("click", () => {
+      highScore = 0;
+      localStorage.setItem("youjoRunHighScore", "0");
+    });
     manualModal?.addEventListener("click", (e) => {
       const target = e.target;
       if (target instanceof HTMLElement && target.hasAttribute("data-close")) {
