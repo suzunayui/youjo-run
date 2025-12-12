@@ -1,7 +1,5 @@
 # Youjo Run
 
-URL: <https://suzunayui.com/youjo-run/>
-
 遊べるURLはこちら
 https://suzunayui.com/youjo-run/
 
