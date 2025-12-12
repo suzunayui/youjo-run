@@ -308,6 +308,55 @@
     const zzzSpawnMs = 1200;
     const sleepParticles = [];
 
+    // Game state
+    let maxDistanceX = state.x;
+    let score = 0;
+    let highScore = Number(localStorage.getItem("youjoRunHighScore") || "0");
+    let gameOver = false;
+    const obstacles = [];
+    let nextSpawnX = state.x + 600;
+    let gameOverTime = 0;
+    let gameOverAwaitRelease = false;
+    const maxHp = 3;
+    let hp = maxHp;
+    let lastHitTime = 0;
+    const invincibleMs = 900;
+
+    const coins = [];
+    let coinCount = 0;
+    let nextCoinX = state.x + 400;
+
+    const stars = [];
+    let nextStarX = state.x + 1200;
+
+    // Jump handling (allow double jump)
+    let jumpsUsed = 0; // 0 on ground, max 2 in air
+    let prevJumpHeld = false;
+
+    // Coin power-up: spend 10 coins for 5s invincibility
+    let powerInvincibleUntil = 0;
+
+    function restartGame() {
+      gameOver = false;
+      gameOverAwaitRelease = false;
+      obstacles.length = 0;
+      nextSpawnX = state.x + 600;
+      score = 0;
+      maxDistanceX = state.x;
+      hp = maxHp;
+      lastHitTime = 0;
+      coins.length = 0;
+      coinCount = 0;
+      nextCoinX = state.x + 400;
+      stars.length = 0;
+      nextStarX = state.x + 1200;
+      jumpsUsed = 0;
+      prevJumpHeld = false;
+      powerInvincibleUntil = 0;
+      lastInputTime = performance.now();
+      setAction("idle");
+    }
+
     function anyInputActive() {
       return keys.left || keys.right || keys.jump || keys.rotate || keys.sit;
     }
@@ -429,6 +478,16 @@
       const hasInput = anyInputActive();
       if (hasInput) lastInputTime = now;
 
+      if (gameOver) {
+        // Prevent instant restart if the player is holding a key.
+        if (gameOverAwaitRelease) {
+          if (!hasInput) gameOverAwaitRelease = false;
+        } else if (hasInput && now - gameOverTime > 300) {
+          restartGame();
+        }
+        return;
+      }
+
       // Sleep after 10s idle, only when grounded.
       if (state.action !== "sleep" && (now - lastInputTime) >= idleSleepMs && state.onGround) {
         setAction("sleep");
@@ -503,7 +562,10 @@
       // World position is unbounded in both directions.
       cameraX = state.x - screenCenterX;
 
-      if (state.onGround && keys.jump) {
+      const jumpPressed = keys.jump && !prevJumpHeld;
+      prevJumpHeld = keys.jump;
+      if (jumpPressed && jumpsUsed < 2) {
+        jumpsUsed += 1;
         state.onGround = false;
         state.vy = jumpVelocity;
         setAction("jump");
@@ -516,9 +578,136 @@
           state.y = groundY;
           state.vy = 0;
           state.onGround = true;
+          jumpsUsed = 0;
         }
       } else {
         state.y = groundY;
+        jumpsUsed = 0;
+      }
+
+      // Update score (distance to the right) and difficulty.
+      if (state.x > maxDistanceX) {
+        maxDistanceX = state.x;
+        score = Math.floor(maxDistanceX - canvas.width * 0.5);
+      }
+
+      const difficulty = Math.min(1, Math.max(0, (maxDistanceX - canvas.width * 0.5) / 6000));
+
+      // Spawn obstacles ahead of the player while not sleeping.
+      if (state.action !== "sleep") {
+        while (maxDistanceX + canvas.width * 1.2 >= nextSpawnX) {
+          const size = 48 + Math.random() * 18;
+          obstacles.push({
+            x: nextSpawnX,
+            w: size,
+            h: size,
+            emoji: Math.random() < 0.5 ? "🪨" : "🌵",
+          });
+          const baseGap = 320;
+          const gap = baseGap + Math.random() * 380 - difficulty * 180;
+          nextSpawnX += Math.max(220, gap);
+        }
+      }
+
+      // Spawn coins ahead of the player while not sleeping.
+      if (state.action !== "sleep") {
+        while (maxDistanceX + canvas.width * 1.2 >= nextCoinX) {
+          const inAir = Math.random() < 0.55;
+          const coinY = inAir
+            ? groundY - drawSize * (0.9 + Math.random() * 0.8)
+            : groundY - drawSize * 0.25;
+          coins.push({
+            x: nextCoinX,
+            y: coinY,
+            r: 22,
+            emoji: "💰",
+          });
+          const baseGap = 240;
+          const gap = baseGap + Math.random() * 420 - difficulty * 140;
+          nextCoinX += Math.max(160, gap);
+        }
+      }
+
+      // Spawn stars (rarer power-up) ahead of the player while not sleeping.
+      if (state.action !== "sleep") {
+        while (maxDistanceX + canvas.width * 1.2 >= nextStarX) {
+          const starY = groundY - drawSize * (1.0 + Math.random() * 1.0);
+          stars.push({
+            x: nextStarX,
+            y: starY,
+            r: 26,
+            emoji: "⭐",
+          });
+          const baseGap = 1100;
+          const gap = baseGap + Math.random() * 1200 - difficulty * 400;
+          nextStarX += Math.max(800, gap);
+        }
+      }
+
+      // Remove obstacles far behind.
+      for (let i = obstacles.length - 1; i >= 0; i--) {
+        if (obstacles[i].x < state.x - canvas.width * 2) obstacles.splice(i, 1);
+      }
+      for (let i = coins.length - 1; i >= 0; i--) {
+        if (coins[i].x < state.x - canvas.width * 2) coins.splice(i, 1);
+      }
+      for (let i = stars.length - 1; i >= 0; i--) {
+        if (stars[i].x < state.x - canvas.width * 2) stars.splice(i, 1);
+      }
+
+      // Coin pickup
+      const charTop = state.y - drawSize;
+      const charBottom = state.y;
+      for (let i = coins.length - 1; i >= 0; i--) {
+        const c = coins[i];
+        const cScreenX = c.x - cameraX;
+        const nearX = Math.abs(cScreenX - screenCenterX) < (c.r + drawSize * 0.25);
+        const nearY = c.y > charTop - c.r && c.y < charBottom + c.r;
+        if (nearX && nearY) {
+          coins.splice(i, 1);
+          coinCount += 1;
+          score += 50;
+        }
+      }
+
+      // Star pickup: 5s invincibility + rainbow glow.
+      for (let i = stars.length - 1; i >= 0; i--) {
+        const s = stars[i];
+        const sScreenX = s.x - cameraX;
+        const nearX = Math.abs(sScreenX - screenCenterX) < (s.r + drawSize * 0.25);
+        const nearY = s.y > charTop - s.r && s.y < charBottom + s.r;
+        if (nearX && nearY) {
+          stars.splice(i, 1);
+          powerInvincibleUntil = Math.max(powerInvincibleUntil, now) + 5000;
+        }
+      }
+
+      // Collision: simple ground hitbox with HP + i-frames.
+      if (state.action !== "sleep" && state.onGround && state.action !== "jump") {
+        if (now < powerInvincibleUntil) {
+          // Fully invincible during power-up.
+        } else if (now - lastHitTime >= invincibleMs) {
+          for (let i = 0; i < obstacles.length; i++) {
+            const ob = obstacles[i];
+            const obScreenX = ob.x - cameraX;
+            const nearX = Math.abs(obScreenX - screenCenterX) < (ob.w * 0.55);
+            if (nearX) {
+              hp -= 1;
+              lastHitTime = now;
+              obstacles.splice(i, 1); // remove hit obstacle
+              if (hp <= 0) {
+                gameOver = true;
+                gameOverTime = now;
+                gameOverAwaitRelease = true;
+                if (score > highScore) {
+                  highScore = score;
+                  localStorage.setItem("youjoRunHighScore", String(highScore));
+                }
+              }
+              break;
+            }
+          }
+        }
       }
 
       const anim = animations[state.action];
@@ -555,7 +744,7 @@
 
       // Sun (emoji) with soft glow
       const sunX = canvas.width * 0.12;
-      const sunY = canvas.height * 0.14;
+      const sunY = canvas.height * 0.26;
       const sunR = canvas.width * 0.09;
       const sunGlow = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, sunR);
       sunGlow.addColorStop(0, "rgba(255, 245, 200, 0.9)");
@@ -677,6 +866,83 @@
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       drawBackground(cameraX);
 
+      // Obstacles
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "alphabetic";
+      for (const ob of obstacles) {
+        const x = ob.x - cameraX;
+        if (x < -ob.w || x > canvas.width + ob.w) continue;
+        const size = ob.w;
+        const y = groundY + size * 0.1;
+        // Draw emoji with solid outline/shadow so it stays readable without translucency.
+        ctx.save();
+        ctx.font = `${Math.round(size)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+        ctx.shadowColor = "rgba(0,0,0,1)";
+        ctx.shadowBlur = 6;
+        ctx.shadowOffsetY = 3;
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = "rgba(0,0,0,1)";
+        ctx.strokeText(ob.emoji, x, y);
+        ctx.fillText(ob.emoji, x, y);
+        ctx.restore();
+      }
+      ctx.restore();
+
+      // Stars
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      for (const s of stars) {
+        const x = s.x - cameraX;
+        if (x < -s.r || x > canvas.width + s.r) continue;
+        ctx.font = `${Math.round(s.r * 2.2)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+        ctx.shadowColor = "rgba(0,0,0,1)";
+        ctx.shadowBlur = 5;
+        ctx.shadowOffsetY = 2;
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = "rgba(0,0,0,1)";
+        ctx.strokeText(s.emoji, x, s.y);
+        ctx.fillText(s.emoji, x, s.y);
+      }
+      ctx.restore();
+
+      // Coins
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      for (const c of coins) {
+        const x = c.x - cameraX;
+        if (x < -c.r || x > canvas.width + c.r) continue;
+        ctx.font = `${Math.round(c.r * 2.2)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+        ctx.shadowColor = "rgba(0,0,0,1)";
+        ctx.shadowBlur = 4;
+        ctx.shadowOffsetY = 2;
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = "rgba(0,0,0,1)";
+        ctx.strokeText(c.emoji, x, c.y);
+        ctx.fillText(c.emoji, x, c.y);
+      }
+      ctx.restore();
+
+      // HUD
+      ctx.save();
+      ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+      ctx.font = `${Math.round(canvas.width * 0.02 + 12)}px sans-serif`;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      const hudText = `距離: ${Math.max(0, score)}  /  ハイスコア: ${highScore}  /  おかね: ${coinCount}`;
+      ctx.fillText(hudText, 12, 10);
+
+      // HP hearts (top-right)
+      const heartSize = Math.round(canvas.width * 0.035 + 10);
+      ctx.font = `${heartSize}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+      ctx.textAlign = "right";
+      const hearts = "❤️".repeat(Math.max(0, hp)) + "🤍".repeat(Math.max(0, maxHp - hp));
+      ctx.fillText(hearts, canvas.width - 12, 8);
+
+      ctx.restore();
+
       const anim = animations[state.action];
       const img = images[state.action];
       if (!img) return;
@@ -689,6 +955,17 @@
       const dy = state.y - drawSize;
 
       ctx.save();
+      const nowMs = performance.now();
+      const isPowerInvincible = nowMs < powerInvincibleUntil;
+      if (isPowerInvincible) {
+        // Warm-only glow (reds/oranges/yellows), no cool hues.
+        const warmMax = 70; // up to yellow, avoids green/blue
+        const cycle = (nowMs / 2.5) % (warmMax * 2);
+        const hue = cycle <= warmMax ? cycle : warmMax * 2 - cycle; // 0 -> warmMax -> 0
+        ctx.filter = `hue-rotate(${hue}deg) saturate(150%) brightness(1.12)`;
+        ctx.shadowColor = "rgba(255,255,255,0.9)";
+        ctx.shadowBlur = 18;
+      }
       if (state.facing === "right") {
         ctx.translate(dx + drawSize, dy);
         ctx.scale(-1, 1);
@@ -733,6 +1010,20 @@
           ctx.font = `${Math.round(canvas.width * 0.05 * (1 + t * 0.25))}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
           ctx.fillText(p.text, p.x, p.y);
         }
+        ctx.restore();
+      }
+
+      if (gameOver) {
+        ctx.save();
+        ctx.fillStyle = "rgba(15, 23, 42, 0.55)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = `bold ${Math.round(canvas.width * 0.06)}px sans-serif`;
+        ctx.fillText("GAME OVER", screenCenterX, canvas.height * 0.45);
+        ctx.font = `${Math.round(canvas.width * 0.03)}px sans-serif`;
+        ctx.fillText("タップ / Space で再開", screenCenterX, canvas.height * 0.55);
         ctx.restore();
       }
     }
@@ -792,6 +1083,13 @@
     bindTouchButton("btn-jump", "jump");
     bindTouchButton("btn-rotate", "rotate");
     bindTouchButton("btn-sit", "sit");
+
+    canvas.addEventListener("pointerdown", (e) => {
+      if (gameOver) {
+        e.preventDefault();
+        restartGame();
+      }
+    });
 
     const manualBtn = document.getElementById("manual-btn");
     const manualModal = document.getElementById("manual-modal");
