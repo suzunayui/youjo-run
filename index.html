@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Sprite Runner</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 20% 20%, #f2f5ff 0, #d9e6ff 35%, #c4d6ff 60%, #aec4ff 100%);
+      font-family: "Segoe UI", sans-serif;
+      color: #0f172a;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    header {
+      padding: 12px 16px;
+      background: linear-gradient(90deg, #0f172a, #1e293b);
+      color: #e2e8f0;
+      letter-spacing: 0.02em;
+      font-weight: 600;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+    }
+    header span { color: #93c5fd; }
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 12px;
+      padding: 12px;
+      width: 100%;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    #stage-wrap {
+      position: relative;
+      width: 100%;
+    }
+    #stage {
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      background: linear-gradient(180deg, #e2f0ff 0%, #eef5ff 50%, #d7e6ff 100%);
+      width: 100%;
+      height: auto;
+      display: block;
+      aspect-ratio: 16 / 9;
+      touch-action: none;
+    }
+    #panel {
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 12px;
+      padding: 12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    }
+    #panel h2 { margin: 0 0 8px 0; font-size: 16px; color: #93c5fd; }
+    #panel p { margin: 4px 0; font-size: 13px; line-height: 1.5; }
+    code { background: rgba(255,255,255,0.08); padding: 2px 4px; border-radius: 4px; }
+    #controls {
+      position: absolute;
+      left: 8px;
+      right: 8px;
+      bottom: 8px;
+      display: none;
+      justify-content: space-between;
+      gap: 8px;
+      pointer-events: auto;
+    }
+    #controls .pad, #controls .actions {
+      display: flex;
+      gap: 8px;
+    }
+    #controls button {
+      width: 56px;
+      height: 56px;
+      border: none;
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.85);
+      color: #e2e8f0;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+      backdrop-filter: blur(6px);
+      touch-action: none;
+      user-select: none;
+    }
+    #controls button.active {
+      background: #93c5fd;
+      color: #0f172a;
+      transform: translateY(1px);
+    }
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; }
+      #panel { order: -1; }
+    }
+    @media (hover: none), (pointer: coarse) {
+      #controls { display: flex; }
+      #panel p { font-size: 14px; }
+      header { padding: 10px 12px; }
+      #panel { display: none; }
+      main {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        padding: 8px;
+        gap: 8px;
+      }
+      #stage-wrap {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        min-height: calc(100dvh - 88px);
+      }
+      #stage {
+        max-height: calc(100dvh - 120px);
+      }
+      #controls {
+        bottom: calc(8px + env(safe-area-inset-bottom));
+      }
+      #controls button {
+        width: 64px;
+        height: 64px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>Sprite Runner <span>demo</span></header>
+  <main>
+    <div id="stage-wrap">
+      <canvas id="stage" width="960" height="540"></canvas>
+      <div id="controls" aria-label="Touch controls">
+        <div class="pad">
+          <button id="btn-left" type="button" aria-label="Move left">◀</button>
+          <button id="btn-right" type="button" aria-label="Move right">▶</button>
+        </div>
+        <div class="actions">
+          <button id="btn-jump" type="button" aria-label="Jump">Jump</button>
+          <button id="btn-rotate" type="button" aria-label="Rotate">Rot</button>
+          <button id="btn-sit" type="button" aria-label="Sit">Sit</button>
+        </div>
+      </div>
+    </div>
+    <section id="panel">
+      <h2>操作</h2>
+      <p>A: 左に走る / D: 右に走る</p>
+      <p>S: 座り（座る→座り待機）</p>
+      <p>Space: ジャンプ</p>
+      <p>Z: 回転モーション</p>
+      <p>右向きはスプライトを水平反転して描画しています。</p>
+    </section>
+  </main>
+
+  <script>
+    const canvas = document.getElementById("stage");
+    const ctx = canvas.getContext("2d");
+
+    const frameSize = 256;
+    const animations = {
+      idle:    { src: "spritesheets/idle_sheet.png",    frames: 194, cols: 14, fps: 18, loop: true },
+      run:     { src: "spritesheets/run_sheet.png",     frames: 43,  cols: 7,  fps: 22, loop: true },
+      jump:    { src: "spritesheets/jump_sheet.png",    frames: 51,  cols: 8,  fps: 30, loop: true }, // 2倍速
+      rotate:  { src: "spritesheets/rotate_sheet.png",  frames: 47,  cols: 7,  fps: 20, loop: true },
+      sit:     { src: "spritesheets/sit_sheet.png",     frames: 39,  cols: 7,  fps: 36, loop: false }, // 約2倍速
+      sitting: { src: "spritesheets/sitting_sheet.png", frames: 58,  cols: 8,  fps: 12, loop: true },
+    };
+
+    const images = {};
+    const keys = { left: false, right: false, jump: false, rotate: false, sit: false };
+    const state = {
+      action: "idle",
+      facing: "left",
+      x: canvas.width * 0.5,
+      y: canvas.height - 120,
+      vy: 0,
+      onGround: true,
+      frameIdx: 0,
+      frameTime: 0,
+    };
+
+    const groundY = canvas.height - 80;
+    const gravity = 1800; // px/s^2
+    const moveSpeed = 320; // px/s
+    const jumpVelocity = -600; // px/s (少し高めに調整)
+
+    function chromaKeyImage(img, key = [0, 255, 0], tolerance = 250, feather = 40, despill = 0.5) {
+      // Replace near-key color with transparent + feather + green despill.
+      const c = document.createElement("canvas");
+      c.width = img.width;
+      c.height = img.height;
+      const cctx = c.getContext("2d");
+      cctx.drawImage(img, 0, 0);
+      const { data } = cctx.getImageData(0, 0, c.width, c.height);
+      const tolSq = tolerance * tolerance;
+      const softSq = (tolerance + feather) * (tolerance + feather);
+      for (let i = 0; i < data.length; i += 4) {
+        const dr = data[i] - key[0];
+        const dg = data[i + 1] - key[1];
+        const db = data[i + 2] - key[2];
+        const distSq = dr * dr + dg * dg + db * db;
+        if (distSq <= tolSq) {
+          data[i + 3] = 0; // hard cut
+        } else if (distSq <= softSq) {
+          // feather alpha near the edge
+          const t = (distSq - tolSq) / (softSq - tolSq);
+          data[i + 3] = data[i + 3] * (1 - t);
+        }
+        // Despill: reduce green halo on remaining pixels.
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        const greenDominant = g > r * 1.2 && g > b * 1.2;
+        if (greenDominant) {
+          const maxOther = Math.max(r, b);
+          const newG = Math.max(maxOther, g * (1 - despill));
+          data[i + 1] = newG;
+        }
+      }
+      const out = cctx.createImageData(c.width, c.height);
+      out.data.set(data);
+      cctx.putImageData(out, 0, 0);
+      return c;
+    }
+
+    function loadImages() {
+      return Promise.all(
+        Object.entries(animations).map(([key, info]) => new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => {
+            images[key] = chromaKeyImage(img, [0, 255, 0], 80);
+            resolve();
+          };
+          img.onerror = reject;
+          img.src = info.src;
+        }))
+      );
+    }
+
+    function setAction(action) {
+      if (state.action === action) return;
+      state.action = action;
+      state.frameIdx = 0;
+      state.frameTime = 0;
+    }
+
+    function handleInput() {
+      const movingLeft = keys.left && !keys.right;
+      const movingRight = keys.right && !keys.left;
+
+      if (movingLeft) state.facing = "left";
+      else if (movingRight) state.facing = "right";
+
+      // Sitting transition
+      if (state.onGround && keys.sit && state.action !== "sit") {
+        state.vy = 0;
+        setAction("sit");
+        return;
+      }
+
+      // While sit animation is playing, let it finish.
+      if (state.action === "sit") return;
+
+      // Sitting idle: break out when moving / jumping / rotating.
+      if (state.action === "sitting") {
+        if (keys.jump && state.onGround) {
+          setAction("jump");
+        } else if (keys.rotate && state.onGround) {
+          setAction("rotate");
+        } else if (movingLeft || movingRight) {
+          setAction("run");
+        } else {
+          setAction("sitting");
+        }
+        return;
+      }
+
+      if (keys.rotate && state.onGround) {
+        setAction("rotate");
+        return;
+      }
+
+      if (!state.onGround) {
+        setAction("jump");
+        return;
+      }
+
+      if (movingLeft || movingRight) setAction("run");
+      else setAction("idle");
+    }
+
+    function update(delta) {
+      handleInput();
+
+      if (state.action !== "sit") {
+        if (keys.left && !keys.right) state.x -= moveSpeed * delta;
+        else if (keys.right && !keys.left) state.x += moveSpeed * delta;
+      }
+
+      state.x = Math.max(frameSize * 0.5, Math.min(canvas.width - frameSize * 0.5, state.x));
+
+      if (state.onGround && keys.jump) {
+        state.onGround = false;
+        state.vy = jumpVelocity;
+        setAction("jump");
+      }
+
+      if (!state.onGround) {
+        state.vy += gravity * delta;
+        state.y += state.vy * delta;
+        if (state.y >= groundY) {
+          state.y = groundY;
+          state.vy = 0;
+          state.onGround = true;
+        }
+      } else {
+        state.y = groundY;
+      }
+
+      const anim = animations[state.action];
+      const frameDuration = 1 / anim.fps;
+      let reachedEnd = false;
+      state.frameTime += delta;
+      while (state.frameTime >= frameDuration) {
+        state.frameTime -= frameDuration;
+        if (state.frameIdx < anim.frames - 1) {
+          state.frameIdx += 1;
+        } else if (anim.loop) {
+          state.frameIdx = 0;
+        } else {
+          reachedEnd = true;
+        }
+      }
+
+      if (reachedEnd) {
+        state.frameIdx = anim.frames - 1;
+        if (state.action === "sit") {
+          setAction("sitting");
+        }
+      }
+    }
+
+    function drawBackground() {
+      ctx.fillStyle = "#cdd9f6";
+      ctx.fillRect(0, groundY + frameSize * 0.2, canvas.width, canvas.height - (groundY + frameSize * 0.2));
+      ctx.fillStyle = "#94a3b8";
+      ctx.fillRect(0, groundY + 24, canvas.width, 8);
+      ctx.fillStyle = "#1e293b";
+      ctx.fillRect(0, groundY + 32, canvas.width, canvas.height - groundY - 32);
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawBackground();
+
+      const anim = animations[state.action];
+      const img = images[state.action];
+      if (!img) return;
+
+      const col = state.frameIdx % anim.cols;
+      const row = Math.floor(state.frameIdx / anim.cols);
+      const sx = col * frameSize;
+      const sy = row * frameSize;
+      const dx = state.x - frameSize * 0.5;
+      const dy = state.y - frameSize;
+
+      ctx.save();
+      if (state.facing === "right") {
+        ctx.translate(dx + frameSize, dy);
+        ctx.scale(-1, 1);
+        ctx.drawImage(img, sx, sy, frameSize, frameSize, 0, 0, frameSize, frameSize);
+      } else {
+        ctx.translate(dx, dy);
+        ctx.drawImage(img, sx, sy, frameSize, frameSize, 0, 0, frameSize, frameSize);
+      }
+      ctx.restore();
+    }
+
+    let lastTime = performance.now();
+    function loop(time) {
+      const delta = Math.min(0.05, (time - lastTime) / 1000);
+      lastTime = time;
+      update(delta);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "KeyA" || e.code === "ArrowLeft") keys.left = true;
+      if (e.code === "KeyD" || e.code === "ArrowRight") keys.right = true;
+      if (e.code === "Space" || e.code === "KeyW" || e.code === "ArrowUp") { keys.jump = true; e.preventDefault(); }
+      if (e.code === "KeyZ") keys.rotate = true;
+      if (e.code === "KeyS" || e.code === "ArrowDown") keys.sit = true;
+    });
+    window.addEventListener("keyup", (e) => {
+      if (e.code === "KeyA" || e.code === "ArrowLeft") keys.left = false;
+      if (e.code === "KeyD" || e.code === "ArrowRight") keys.right = false;
+      if (e.code === "Space" || e.code === "KeyW" || e.code === "ArrowUp") keys.jump = false;
+      if (e.code === "KeyZ") keys.rotate = false;
+      if (e.code === "KeyS" || e.code === "ArrowDown") keys.sit = false;
+    });
+
+    function bindTouchButton(buttonId, keyName) {
+      const btn = document.getElementById(buttonId);
+      if (!btn) return;
+
+      const down = (e) => {
+        e.preventDefault();
+        keys[keyName] = true;
+        btn.classList.add("active");
+        try { btn.setPointerCapture(e.pointerId); } catch {}
+      };
+      const up = (e) => {
+        e.preventDefault();
+        keys[keyName] = false;
+        btn.classList.remove("active");
+        try { btn.releasePointerCapture(e.pointerId); } catch {}
+      };
+
+      btn.addEventListener("pointerdown", down);
+      btn.addEventListener("pointerup", up);
+      btn.addEventListener("pointercancel", up);
+      btn.addEventListener("pointerleave", up);
+      btn.addEventListener("lostpointercapture", up);
+    }
+
+    bindTouchButton("btn-left", "left");
+    bindTouchButton("btn-right", "right");
+    bindTouchButton("btn-jump", "jump");
+    bindTouchButton("btn-rotate", "rotate");
+    bindTouchButton("btn-sit", "sit");
+
+    window.addEventListener("blur", () => {
+      keys.left = keys.right = keys.jump = keys.rotate = keys.sit = false;
+      document.querySelectorAll("#controls button").forEach((b) => b.classList.remove("active"));
+    });
+
+    loadImages()
+      .then(() => requestAnimationFrame(loop))
+      .catch((err) => {
+        ctx.fillStyle = "#ef4444";
+        ctx.font = "20px sans-serif";
+        ctx.fillText("画像の読み込みに失敗しました: " + err, 20, 40);
+        console.error(err);
+      });
+  </script>
+</body>
+</html>

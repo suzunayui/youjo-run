@@ -1,0 +1,30 @@
+# OS / Explorer
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.python-version
+.venv/
+venv/
+env/
+
+# Logs
+*.log
+
+# Build / package outputs (in case you add tooling later)
+dist/
+build/
+out/
+node_modules/
+
+bin/
