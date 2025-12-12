@@ -8,12 +8,37 @@
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      background: radial-gradient(circle at 20% 20%, #f2f5ff 0, #d9e6ff 35%, #c4d6ff 60%, #aec4ff 100%);
+      /* Cozy pastel sky */
+      background:
+        radial-gradient(circle at 18% 12%, rgba(255,255,255,0.9) 0 120px, transparent 140px),
+        radial-gradient(circle at 82% 18%, rgba(255,255,255,0.8) 0 160px, transparent 190px),
+        radial-gradient(circle at 35% 30%, rgba(255,255,255,0.7) 0 110px, transparent 140px),
+        radial-gradient(circle at 65% 38%, rgba(255,255,255,0.6) 0 140px, transparent 170px),
+        radial-gradient(circle at 50% 10%, #f7fbff 0, #e7f2ff 40%, #d7e8ff 65%, #c8dcff 100%);
       font-family: "Segoe UI", sans-serif;
       color: #0f172a;
       display: flex;
       flex-direction: column;
       min-height: 100vh;
+      position: relative;
+      overflow-x: hidden;
+    }
+    body::after {
+      /* Soft hills at bottom */
+      content: "";
+      position: fixed;
+      left: -10vw;
+      right: -10vw;
+      bottom: -20vh;
+      height: 50vh;
+      background:
+        radial-gradient(120% 100% at 10% 80%, #cfe8c9 0 55%, transparent 56%),
+        radial-gradient(120% 100% at 55% 90%, #bfe0b8 0 60%, transparent 61%),
+        radial-gradient(120% 100% at 95% 85%, #a9d2a2 0 58%, transparent 59%);
+      opacity: 0.9;
+      pointer-events: none;
+      z-index: 0;
+      filter: blur(2px);
     }
     header {
       padding: 12px 16px;
@@ -22,17 +47,40 @@
       letter-spacing: 0.02em;
       font-weight: 600;
       box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
     }
-    header span { color: #93c5fd; }
+    header .title { font-size: 18px; }
+    header .actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #manual-btn {
+      border: none;
+      border-radius: 8px;
+      padding: 6px 10px;
+      background: rgba(147, 197, 253, 0.18);
+      color: #e2e8f0;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: inset 0 0 0 1px rgba(147, 197, 253, 0.45);
+    }
+    #manual-btn:hover { background: rgba(147, 197, 253, 0.28); }
+    #manual-btn:active { transform: translateY(1px); }
     main {
       flex: 1;
       display: grid;
-      grid-template-columns: 1fr 320px;
+      grid-template-columns: 1fr;
       gap: 12px;
       padding: 12px;
       width: 100%;
       max-width: 1200px;
       margin: 0 auto;
+      position: relative;
+      z-index: 1;
     }
     #stage-wrap {
       position: relative;
@@ -91,9 +139,51 @@
       color: #0f172a;
       transform: translateY(1px);
     }
+    /* Manual modal */
+    #manual-modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      z-index: 1000;
+    }
+    #manual-modal.open { display: block; }
+    #manual-modal .backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.6);
+      backdrop-filter: blur(2px);
+    }
+    #manual-modal .dialog {
+      position: relative;
+      margin: 8vh auto;
+      width: min(520px, 92vw);
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 12px;
+      padding: 16px 18px 12px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+    }
+    #manual-modal .dialog h2 {
+      margin: 0 0 8px 0;
+      font-size: 18px;
+      color: #93c5fd;
+    }
+    #manual-modal .dialog p { margin: 6px 0; font-size: 14px; line-height: 1.6; }
+    #manual-modal .close {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 32px;
+      height: 32px;
+      border: none;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      color: #e2e8f0;
+      font-size: 20px;
+      cursor: pointer;
+    }
     @media (max-width: 900px) {
       main { grid-template-columns: 1fr; }
-      #panel { order: -1; }
     }
     @media (hover: none), (pointer: coarse) {
       #controls { display: flex; }
@@ -105,8 +195,9 @@
         flex-direction: column;
         justify-content: center;
         align-items: center;
-        padding: 8px;
-        gap: 8px;
+        padding: 0;
+        gap: 0;
+        height: 100dvh;
       }
       #stage-wrap {
         flex: 1;
@@ -114,10 +205,17 @@
         align-items: center;
         justify-content: center;
         width: 100%;
-        min-height: calc(100dvh - 88px);
+        min-height: 100dvh;
+        padding-top: 52px; /* header space */
+        padding-bottom: 110px; /* controls space */
+        padding-left: 6px;
+        padding-right: 6px;
+        gap: 0;
       }
       #stage {
-        max-height: calc(100dvh - 120px);
+        width: 100%;
+        height: auto;
+        max-height: 100%;
       }
       #controls {
         bottom: calc(8px + env(safe-area-inset-bottom));
@@ -130,7 +228,12 @@
   </style>
 </head>
 <body>
-  <header>Sprite Runner <span>demo</span></header>
+  <header>
+    <div class="title">Youjo Run</div>
+    <div class="actions">
+      <button id="manual-btn" type="button" aria-haspopup="dialog" aria-controls="manual-modal">説明書</button>
+    </div>
+  </header>
   <main>
     <div id="stage-wrap">
       <canvas id="stage" width="960" height="540"></canvas>
@@ -146,21 +249,31 @@
         </div>
       </div>
     </div>
-    <section id="panel">
-      <h2>操作</h2>
-      <p>A: 左に走る / D: 右に走る</p>
-      <p>S: 座り（座る→座り待機）</p>
-      <p>Space: ジャンプ</p>
+  </main>
+
+  <div id="manual-modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="manual-title">
+    <div class="backdrop" data-close></div>
+    <div class="dialog" role="document">
+      <button class="close" type="button" aria-label="閉じる" data-close>×</button>
+      <h2 id="manual-title">操作</h2>
+      <p>A / ←: 左に走る</p>
+      <p>D / →: 右に走る</p>
+      <p>W / Space / ↑: ジャンプ</p>
+      <p>S / ↓: 座り（座る→座り待機）</p>
       <p>Z: 回転モーション</p>
       <p>右向きはスプライトを水平反転して描画しています。</p>
-    </section>
-  </main>
+    </div>
+  </div>
 
   <script>
     const canvas = document.getElementById("stage");
     const ctx = canvas.getContext("2d");
 
-    const frameSize = 256;
+    const frameSize = 256; // source frame size (px)
+    const drawScale = 1.0;
+    const drawSize = frameSize * drawScale;
+    const screenCenterX = canvas.width * 0.5;
+    let cameraX = 0;
     const animations = {
       idle:    { src: "spritesheets/idle_sheet.png",    frames: 194, cols: 14, fps: 18, loop: true },
       run:     { src: "spritesheets/run_sheet.png",     frames: 43,  cols: 7,  fps: 22, loop: true },
@@ -168,6 +281,10 @@
       rotate:  { src: "spritesheets/rotate_sheet.png",  frames: 47,  cols: 7,  fps: 20, loop: true },
       sit:     { src: "spritesheets/sit_sheet.png",     frames: 39,  cols: 7,  fps: 36, loop: false }, // 約2倍速
       sitting: { src: "spritesheets/sitting_sheet.png", frames: 58,  cols: 8,  fps: 12, loop: true },
+      rotate:  { src: "spritesheets/rotate_sheet.png",  frames: 47,  cols: 7,  fps: 20, loop: true },
+      sit:     { src: "spritesheets/sit_sheet.png",     frames: 39,  cols: 7,  fps: 36, loop: false },
+      sitting: { src: "spritesheets/sitting_sheet.png", frames: 58,  cols: 8,  fps: 12, loop: true },
+      sleep:   { src: "spritesheets/sleep_sheet.png",   frames: 65,  cols: 9,  fps: 12, loop: false },
     };
 
     const images = {};
@@ -182,6 +299,22 @@
       frameIdx: 0,
       frameTime: 0,
     };
+
+    let lastInputTime = performance.now();
+    const idleSleepMs = 10000;
+
+    let sleepStartTime = 0;
+    let lastZzzSpawnTime = 0;
+    const zzzSpawnMs = 1200;
+    const sleepParticles = [];
+
+    function anyInputActive() {
+      return keys.left || keys.right || keys.jump || keys.rotate || keys.sit;
+    }
+
+    function registerInput() {
+      lastInputTime = performance.now();
+    }
 
     const groundY = canvas.height - 80;
     const gravity = 1800; // px/s^2
@@ -292,6 +425,74 @@
     }
 
     function update(delta) {
+      const now = performance.now();
+      const hasInput = anyInputActive();
+      if (hasInput) lastInputTime = now;
+
+      // Sleep after 10s idle, only when grounded.
+      if (state.action !== "sleep" && (now - lastInputTime) >= idleSleepMs && state.onGround) {
+        setAction("sleep");
+        sleepStartTime = now;
+        lastZzzSpawnTime = now;
+        sleepParticles.length = 0;
+      }
+
+      // While sleeping: animate to end, then hold last frame. Wake on input.
+      if (state.action === "sleep") {
+        const anim = animations[state.action];
+        if (hasInput) {
+          setAction("idle");
+          sleepParticles.length = 0;
+        } else {
+          const frameDuration = 1 / anim.fps;
+          let reachedEnd = false;
+          state.frameTime += delta;
+          while (state.frameTime >= frameDuration) {
+            state.frameTime -= frameDuration;
+            if (state.frameIdx < anim.frames - 1) {
+              state.frameIdx += 1;
+            } else if (anim.loop) {
+              state.frameIdx = 0;
+            } else {
+              reachedEnd = true;
+            }
+          }
+          if (reachedEnd) {
+            state.frameIdx = anim.frames - 1;
+          }
+
+          // Spawn floating "zzz" once fully asleep.
+          if (state.frameIdx >= anim.frames - 1 && now - lastZzzSpawnTime >= zzzSpawnMs) {
+            lastZzzSpawnTime = now;
+            sleepParticles.push({
+              text: "💤",
+              x: screenCenterX + (Math.random() - 0.5) * drawSize * 0.3,
+              y: state.y - drawSize * 0.75,
+              vx: (Math.random() - 0.5) * 10,
+              vy: -20 - Math.random() * 20,
+              born: now,
+              life: 2200 + Math.random() * 600,
+            });
+            if (sleepParticles.length > 12) sleepParticles.shift();
+          }
+
+          // Update particles
+          for (let i = sleepParticles.length - 1; i >= 0; i--) {
+            const p = sleepParticles[i];
+            const age = now - p.born;
+            if (age >= p.life) {
+              sleepParticles.splice(i, 1);
+              continue;
+            }
+            p.x += p.vx * delta;
+            p.y += p.vy * delta;
+            p.vx *= 0.98;
+          }
+
+          return;
+        }
+      }
+
       handleInput();
 
       if (state.action !== "sit") {
@@ -299,7 +500,8 @@
         else if (keys.right && !keys.left) state.x += moveSpeed * delta;
       }
 
-      state.x = Math.max(frameSize * 0.5, Math.min(canvas.width - frameSize * 0.5, state.x));
+      // World position is unbounded in both directions.
+      cameraX = state.x - screenCenterX;
 
       if (state.onGround && keys.jump) {
         state.onGround = false;
@@ -342,18 +544,138 @@
       }
     }
 
-    function drawBackground() {
-      ctx.fillStyle = "#cdd9f6";
-      ctx.fillRect(0, groundY + frameSize * 0.2, canvas.width, canvas.height - (groundY + frameSize * 0.2));
-      ctx.fillStyle = "#94a3b8";
-      ctx.fillRect(0, groundY + 24, canvas.width, 8);
-      ctx.fillStyle = "#1e293b";
-      ctx.fillRect(0, groundY + 32, canvas.width, canvas.height - groundY - 32);
+    function drawBackground(camX) {
+      // Cozy pastel sky
+      const sky = ctx.createLinearGradient(0, 0, 0, groundY);
+      sky.addColorStop(0, "#f7fbff");
+      sky.addColorStop(0.6, "#e8f2ff");
+      sky.addColorStop(1, "#d7e8ff");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, canvas.width, groundY);
+
+      // Sun (emoji) with soft glow
+      const sunX = canvas.width * 0.12;
+      const sunY = canvas.height * 0.14;
+      const sunR = canvas.width * 0.09;
+      const sunGlow = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, sunR);
+      sunGlow.addColorStop(0, "rgba(255, 245, 200, 0.9)");
+      sunGlow.addColorStop(1, "rgba(255, 245, 200, 0)");
+      ctx.fillStyle = sunGlow;
+      ctx.beginPath();
+      ctx.arc(sunX, sunY, sunR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = `${Math.round(sunR * 1.6)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("🌞", sunX, sunY);
+
+      const wrapX = (x, span) => ((x % span) + span) % span;
+
+      // Soft clouds (emoji, slow parallax)
+      const cloudSize = canvas.width * 0.08;
+      ctx.font = `${Math.round(cloudSize)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const clouds = [
+        { x: 0.30, y: 0.18, e: "☁️", s: 1.0 },
+        { x: 0.70, y: 0.22, e: "☁️", s: 1.1 },
+        { x: 0.50, y: 0.32, e: "☁️", s: 0.95 },
+      ];
+      for (const c of clouds) {
+        const span = canvas.width;
+        const baseX = canvas.width * c.x;
+        const cxWrapped = wrapX(baseX - camX * 0.3, span);
+        const cy = canvas.height * c.y;
+        for (const offset of [0, -span]) {
+          const cx = cxWrapped + offset;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.scale(c.s, c.s);
+          ctx.fillText(c.e, 0, 0);
+          ctx.restore();
+        }
+      }
+
+      // Gentle hills (medium parallax), infinite tiling.
+      const hillFactor = 0.5;
+      const hillStep = canvas.width;
+      const hillViewLeft = camX * hillFactor - hillStep * 2;
+      const hillViewRight = camX * hillFactor + canvas.width + hillStep * 2;
+      const hillFirst = Math.floor(hillViewLeft / hillStep);
+      const hillLast = Math.ceil(hillViewRight / hillStep);
+      ctx.fillStyle = "#cfe8c9";
+      ctx.beginPath();
+      const hillDefs = [
+        { x: 0.15, y: 30, rx: 0.35, ry: 0.22 },
+        { x: 0.60, y: 40, rx: 0.45, ry: 0.25 },
+        { x: 1.05, y: 35, rx: 0.40, ry: 0.23 },
+      ];
+      for (let k = hillFirst; k <= hillLast; k++) {
+        const tileOffset = k * hillStep - camX * hillFactor;
+        for (const h of hillDefs) {
+          const baseX = canvas.width * h.x;
+          const rx = canvas.width * h.rx;
+          const ry = canvas.height * h.ry;
+          ctx.ellipse(baseX + tileOffset, groundY + h.y, rx, ry, 0, 0, Math.PI * 2);
+        }
+      }
+      ctx.fill();
+
+      const mod = (n, m) => ((n % m) + m) % m;
+
+      // Tree line on the horizon (emoji, medium-fast parallax), stable tiling.
+      const treeFactor = 0.6;
+      const treeY = groundY - canvas.height * 0.12;
+      const treeSize = canvas.width * 0.09;
+      ctx.font = `${Math.round(treeSize)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      const trees = ["🌳", "🌲", "🌳", "🌲", "🌳"];
+      const treeStep = canvas.width * 0.22;
+      const treeViewLeft = camX * treeFactor - treeStep * 3;
+      const treeViewRight = camX * treeFactor + canvas.width + treeStep * 3;
+      const treeFirst = Math.floor(treeViewLeft / treeStep);
+      const treeLast = Math.ceil(treeViewRight / treeStep);
+      for (let i = treeFirst; i <= treeLast; i++) {
+        const tx = i * treeStep - camX * treeFactor;
+        ctx.fillText(trees[mod(i, trees.length)], tx, treeY);
+      }
+
+      // Ground decorations (emoji, moves with ground), stable tiling.
+      const decoFactor = 1.0;
+      const decoY = groundY + canvas.height * 0.06;
+      const decoSize = canvas.width * 0.045;
+      ctx.font = `${Math.round(decoSize)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const decos = ["🌿", "☘️", "🍀", "🌾", "🌱"];
+      const decoStep = canvas.width * 0.14;
+      const decoViewLeft = camX * decoFactor - decoStep * 3;
+      const decoViewRight = camX * decoFactor + canvas.width + decoStep * 3;
+      const decoFirst = Math.floor(decoViewLeft / decoStep);
+      const decoLast = Math.ceil(decoViewRight / decoStep);
+      for (let i = decoFirst; i <= decoLast; i++) {
+        const dx = i * decoStep - camX * decoFactor;
+        ctx.fillText(decos[mod(i, decos.length)], dx, decoY);
+      }
+
+      // Ground / platform
+      const grass = ctx.createLinearGradient(0, groundY, 0, canvas.height);
+      grass.addColorStop(0, "#9ad29a");
+      grass.addColorStop(1, "#6fbf7a");
+      ctx.fillStyle = grass;
+      ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+
+      // Horizon line / ground edge for readability.
+      ctx.fillStyle = "rgba(15, 23, 42, 0.35)";
+      ctx.fillRect(0, groundY, canvas.width, 10);
+      ctx.fillStyle = "rgba(255, 255, 255, 0.25)";
+      ctx.fillRect(0, groundY + 10, canvas.width, 3);
     }
 
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      drawBackground();
+      drawBackground(cameraX);
 
       const anim = animations[state.action];
       const img = images[state.action];
@@ -363,19 +685,56 @@
       const row = Math.floor(state.frameIdx / anim.cols);
       const sx = col * frameSize;
       const sy = row * frameSize;
-      const dx = state.x - frameSize * 0.5;
-      const dy = state.y - frameSize;
+      const dx = screenCenterX - drawSize * 0.5;
+      const dy = state.y - drawSize;
 
       ctx.save();
       if (state.facing === "right") {
-        ctx.translate(dx + frameSize, dy);
+        ctx.translate(dx + drawSize, dy);
         ctx.scale(-1, 1);
-        ctx.drawImage(img, sx, sy, frameSize, frameSize, 0, 0, frameSize, frameSize);
+        ctx.drawImage(img, sx, sy, frameSize, frameSize, 0, 0, drawSize, drawSize);
       } else {
         ctx.translate(dx, dy);
-        ctx.drawImage(img, sx, sy, frameSize, frameSize, 0, 0, frameSize, frameSize);
+        ctx.drawImage(img, sx, sy, frameSize, frameSize, 0, 0, drawSize, drawSize);
       }
       ctx.restore();
+
+      // Sleep text effects
+      if (state.action === "sleep") {
+        const anim = animations.sleep;
+        const progress = anim.frames > 1 ? state.frameIdx / (anim.frames - 1) : 1;
+
+        // "すやぁ・・・" appears around frame 30, then fades out to the end.
+        const suyaaStartFrame = 30;
+        if (state.frameIdx >= suyaaStartFrame && state.frameIdx < anim.frames - 1) {
+          const tSuyaa = (state.frameIdx - suyaaStartFrame) / (anim.frames - 1 - suyaaStartFrame);
+          const alpha = Math.max(0, 1 - tSuyaa);
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+          ctx.font = `${Math.round(canvas.width * 0.04)}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "bottom";
+          const ty = state.y - drawSize * 1.05 - tSuyaa * 20;
+          ctx.fillText("すやぁ・・・", screenCenterX, ty);
+          ctx.restore();
+        }
+
+        // Floating "zzz"
+        ctx.save();
+        ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        for (const p of sleepParticles) {
+          const age = performance.now() - p.born;
+          const t = Math.min(1, age / p.life);
+          const a = 1 - t;
+          ctx.globalAlpha = a;
+          ctx.font = `${Math.round(canvas.width * 0.05 * (1 + t * 0.25))}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+          ctx.fillText(p.text, p.x, p.y);
+        }
+        ctx.restore();
+      }
     }
 
     let lastTime = performance.now();
@@ -388,6 +747,7 @@
     }
 
     window.addEventListener("keydown", (e) => {
+      registerInput();
       if (e.code === "KeyA" || e.code === "ArrowLeft") keys.left = true;
       if (e.code === "KeyD" || e.code === "ArrowRight") keys.right = true;
       if (e.code === "Space" || e.code === "KeyW" || e.code === "ArrowUp") { keys.jump = true; e.preventDefault(); }
@@ -408,6 +768,7 @@
 
       const down = (e) => {
         e.preventDefault();
+        registerInput();
         keys[keyName] = true;
         btn.classList.add("active");
         try { btn.setPointerCapture(e.pointerId); } catch {}
@@ -431,6 +792,30 @@
     bindTouchButton("btn-jump", "jump");
     bindTouchButton("btn-rotate", "rotate");
     bindTouchButton("btn-sit", "sit");
+
+    const manualBtn = document.getElementById("manual-btn");
+    const manualModal = document.getElementById("manual-modal");
+    const closeManual = () => {
+      if (!manualModal) return;
+      manualModal.classList.remove("open");
+      manualModal.setAttribute("aria-hidden", "true");
+    };
+    const openManual = () => {
+      if (!manualModal) return;
+      manualModal.classList.add("open");
+      manualModal.setAttribute("aria-hidden", "false");
+      manualModal.querySelector(".close")?.focus();
+    };
+    manualBtn?.addEventListener("click", openManual);
+    manualModal?.addEventListener("click", (e) => {
+      const target = e.target;
+      if (target instanceof HTMLElement && target.hasAttribute("data-close")) {
+        closeManual();
+      }
+    });
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Escape" && manualModal?.classList.contains("open")) closeManual();
+    });
 
     window.addEventListener("blur", () => {
       keys.left = keys.right = keys.jump = keys.rotate = keys.sit = false;
